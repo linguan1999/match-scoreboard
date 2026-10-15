@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>裁判计分器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #14171c; color: #e8eaed;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* 顶部：总览 + 同步状态 */
+  #topbar {
+    padding: 8px 12px; background: #1c2027; border-bottom: 1px solid #2a2f38;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #syncDot { width: 10px; height: 10px; border-radius: 50%; background: #666; flex-shrink: 0; }
+  #syncDot.ok { background: #3ddc84; }
+  #syncDot.bad { background: #ff5555; }
+  #syncText { font-size: 12px; color: #9aa3b2; }
+  #btnSettings {
+    background: none; border: none; color: #9aa3b2; font-size: 20px;
+    padding: 4px 8px; cursor: pointer; flex-shrink: 0;
+  }
+
+  /* 设置面板 */
+  #settingsMask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: none; align-items: center; justify-content: center; z-index: 99;
+  }
+  #settingsMask.show { display: flex; }
+  #settingsPanel {
+    width: 90%; max-width: 420px; background: #1c2027; border-radius: 12px;
+    padding: 18px; display: flex; flex-direction: column; gap: 10px;
+  }
+  #settingsPanel h2 { font-size: 17px; margin-bottom: 4px; }
+  #settingsPanel label { font-size: 13px; color: #9aa3b2; }
+  #settingsPanel input {
+    width: 100%; padding: 11px; font-size: 15px; border-radius: 8px;
+    border: 1px solid #3a4150; background: #0f1216; color: #fff; outline: none;
+  }
+  #settingsPanel .hint { font-size: 12px; color: #6b7280; line-height: 1.6; }
+  #settingsPanel button {
+    padding: 13px; font-size: 16px; font-weight: 600; border: none;
+    border-radius: 8px; background: #2f6fed; color: #fff; cursor: pointer; margin-top: 6px;
+  }
+  #settingsPanel button.restart { background: #7d2e2e; }
+  #settingsPanel button:disabled { opacity: .5; }
+  .ov { flex: 1; text-align: center; font-size: 13px; color: #9aa3b2;
+       overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .ov b { color: #fff; font-size: 15px; font-variant-numeric: tabular-nums; }
+
+  /* 场地切换 Tab */
+  #tabs { display: flex; }
+  #tabs button {
+    flex: 1; padding: 12px; font-size: 17px; font-weight: 600; border: none;
+    background: #1c2027; color: #9aa3b2; cursor: pointer;
+    border-bottom: 3px solid transparent;
+  }
+  #tabs button.active { color: #fff; border-bottom-color: #2f6fed; background: #232833; }
+
+  /* 主区域 */
+  #court { flex: 1; display: flex; flex-direction: column; padding: 12px; gap: 12px; overflow-y: auto; }
+
+  .head { display: flex; align-items: center; justify-content: space-between; }
+  .badge { font-size: 13px; padding: 4px 14px; border-radius: 12px; background: #2a2f38; color: #9aa3b2; }
+  .badge.running { background: #1f3a2a; color: #7de3a8; }
+  .badge.paused { background: #3a3423; color: #f0cf7d; }
+
+  #timer {
+    text-align: center; font-size: 52px; font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: 3px;
+  }
+
+  .team {
+    display: grid; grid-template-columns: 60px 1fr 90px 60px;
+    align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px;
+  }
+  .team.a { background: rgba(47,111,237,.13); border: 1px solid rgba(47,111,237,.4); }
+  .team.b { background: rgba(237,80,80,.11); border: 1px solid rgba(237,80,80,.4); }
+  .team .name { font-size: 21px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .team .name .edit-ico { font-style: normal; font-size: 14px; opacity: .55; margin-left: 4px; }
+  .team.a .name { color: #7aa7ff; }
+  .team.b .name { color: #ff8f8f; }
+  .team .score { font-size: 48px; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; }
+  .score-btn {
+    height: 60px; font-size: 28px; font-weight: 700; border: none;
+    border-radius: 10px; color: #fff; cursor: pointer;
+  }
+  .score-btn.plus { background: #2e7d4f; }
+  .score-btn.plus:active { background: #3cb06e; }
+  .score-btn.minus { background: #4a3038; }
+  .score-btn.minus:active { background: #6b4250; }
+  .score-btn:disabled { opacity: .25; }
+
+  .controls { display: flex; gap: 10px; margin-top: auto; }
+  .controls button {
+    flex: 1; padding: 16px 6px; font-size: 17px; font-weight: 600; border: none;
+    border-radius: 10px; color: #fff; background: #3a4150; cursor: pointer;
+  }
+  .controls button.primary { background: #2f6fed; }
+  .controls button.warn { background: #8a5a2a; }
+  .controls button.danger { background: #7d2e2e; }
+
+  /* 新建场次 */
+  .setup { display: flex; flex-direction: column; gap: 10px; }
+  .setup label { font-size: 14px; color: #9aa3b2; }
+  .setup input {
+    width: 100%; padding: 14px; font-size: 20px; border-radius: 10px;
+    border: 1px solid #3a4150; background: #0f1216; color: #fff; outline: none;
+  }
+  .setup input:focus { border-color: #2f6fed; }
+
+  /* 冲突警告条（非阻塞，顶部滑入） */
+  #conflictBanner {
+    position: fixed; top: 0; left: 0; right: 0;
+    background: #b41414; color: #fff;
+    display: none; flex-direction: column; gap: 10px;
+    z-index: 9999; padding: 12px 14px 14px;
+    box-shadow: 0 2px 12px rgba(180,20,20,.6);
+    transform: translateY(0);
+  }
+  body.banner-open #conflictBanner { display: flex; }
+  #conflictBanner .cb-title {
+    font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 6px;
+  }
+  #conflictBanner .cb-body {
+    font-size: 13px; line-height: 1.6; opacity: .92;
+  }
+  #conflictBanner .cb-actions {
+    display: flex; gap: 8px;
+  }
+  #conflictBanner button {
+    padding: 9px 14px; font-size: 14px; font-weight: 600; border: none;
+    border-radius: 6px; cursor: pointer;
+  }
+  #conflictBanner .btnTakeover {
+    background: #fff; color: #b41414;
+  }
+  #conflictBanner .btnDismiss {
+    background: rgba(255,255,255,.2); color: #fff;
+  }
+  #conflictBanner .cb-ids {
+    font-size: 11px; opacity: .65; font-family: monospace; word-break: break-all;
+  }
+
+  /* 暂停时间核对弹窗 */
+  #pauseMask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: none; align-items: center; justify-content: center; z-index: 98;
+  }
+  #pauseMask.show { display: flex; }
+  #pausePanel {
+    width: 90%; max-width: 420px; background: #1c2027; border-radius: 12px;
+    padding: 18px; display: flex; flex-direction: column; gap: 12px;
+  }
+  #pausePanel h2 { font-size: 17px; }
+  #pausePanel .cmp-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; background: #14171c;
+    font-size: 14px; color: #9aa3b2;
+  }
+  #pausePanel .cmp-row b { font-size: 24px; color: #fff; font-variant-numeric: tabular-nums; }
+  #pausePanel .hint { font-size: 12px; color: #6b7280; line-height: 1.6; }
+  #pausePanel button {
+    padding: 13px; font-size: 16px; font-weight: 600; border: none;
+    border-radius: 8px; color: #fff; cursor: pointer; background: #3a4150;
+  }
+  #pausePanel button.primary { background: #2f6fed; }
+  #pausePanel button:disabled { opacity: .4; }
+
+  /* 通用确认/提示弹窗（Android WebView 不支持原生 confirm/alert） */
+  #dialogMask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: none; align-items: center; justify-content: center; z-index: 997;
+  }
+  #dialogMask.show { display: flex; }
+  #dialogPanel {
+    width: 90%; max-width: 420px; background: #1c2027; border-radius: 12px;
+    padding: 18px; display: flex; flex-direction: column; gap: 16px;
+  }
+  #dialogMsg { font-size: 16px; line-height: 1.7; white-space: pre-line; word-break: break-word; }
+  #dialogPanel .btns { display: flex; gap: 10px; }
+  #dialogPanel button {
+    flex: 1; padding: 13px; font-size: 16px; font-weight: 600; border: none;
+    border-radius: 8px; color: #fff; cursor: pointer; background: #3a4150;
+  }
+  #dialogPanel button.primary { background: #2f6fed; }
+
+  /* 修改队伍名称弹窗 */
+  #editMask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: none; align-items: center; justify-content: center; z-index: 998;
+  }
+  #editMask.show { display: flex; }
+  #editPanel {
+    width: 90%; max-width: 420px; background: #1c2027; border-radius: 12px;
+    padding: 18px; display: flex; flex-direction: column; gap: 12px;
+  }
+  #editPanel h2 { font-size: 17px; }
+  #editPanel input {
+    width: 100%; padding: 13px; font-size: 19px; border-radius: 8px;
+    border: 1px solid #3a4150; background: #0f1216; color: #fff; outline: none;
+  }
+  #editPanel input:focus { border-color: #2f6fed; }
+  #editPanel button {
+    padding: 13px; font-size: 16px; font-weight: 600; border: none;
+    border-radius: 8px; color: #fff; cursor: pointer; background: #3a4150;
+  }
+  #editPanel button.primary { background: #2f6fed; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <span id="syncDot"></span><span id="syncText">未同步</span>
+  <div class="ov" id="ov0">场地1 -:-</div>
+  <div class="ov" id="ov1">场地2 -:-</div>
+  <button id="btnSettings">⚙</button>
+</div>
+
+<div id="settingsMask">
+  <div id="settingsPanel">
+    <h2>同步设置</h2>
+    <label>本地服务器地址（同 WiFi 时优先走这里）</label>
+    <input id="setLocal" placeholder="http://192.168.1.100:8080">
+    <label>云端地址（阿里云 FC，无 WiFi 时兜底）</label>
+    <input id="setCloud" placeholder="https://xxx.cn-hangzhou.fcapp.run">
+    <label>同步口令</label>
+    <input id="setSecret" placeholder="与服务端一致">
+    <div class="hint">本地模式：vMix 电脑运行 local_server.ps1，此处填该电脑的局域网 IP。每次推送先试本地（1.5 秒超时），失败自动转云端。</div>
+    <button id="btnSaveSettings">保存并同步</button>
+    <button id="btnRestartCloud" class="restart">重启阿里云服务端程序</button>
+    <div class="hint">云端服务卡死、同步不上时点这里重启。重启约 1-2 秒，当前比分与计时保留在服务端，不会丢失。</div>
+  </div>
+</div>
+
+<div id="pauseMask">
+  <div id="pausePanel">
+    <h2>⏸ 暂停 · 核对时间</h2>
+    <div class="cmp-row"><span>接收端时间（观众所见）</span><b id="pauseRecv">获取中…</b></div>
+    <div class="cmp-row"><span>手机本地时间</span><b id="pauseLocal">--:--</b></div>
+    <div class="hint" id="pauseHint">暂停后时间会定格为所选值。若两边不一致，建议以接收端为准，避免观众看到时间跳变。</div>
+    <button class="primary" id="btnPauseRecv" disabled>以接收端时间暂停</button>
+    <button id="btnPauseLocal">以手机时间暂停</button>
+    <button id="btnPauseCancel">取消</button>
+  </div>
+</div>
+
+<div id="dialogMask">
+  <div id="dialogPanel">
+    <div id="dialogMsg"></div>
+    <div class="btns">
+      <button id="dialogOk" class="primary">确定</button>
+      <button id="dialogCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<div id="editMask">
+  <div id="editPanel">
+    <h2 id="editTitle">修改队伍名称</h2>
+    <input id="editInput" maxlength="20" placeholder="输入队伍名称">
+    <button class="primary" id="btnEditOk">确定</button>
+    <button id="btnEditCancel">取消</button>
+  </div>
+</div>
+
+<div id="tabs">
+  <button id="tab0" class="active">场地 1</button>
+  <button id="tab1">场地 2</button>
+</div>
+
+<div id="court"></div>
+
+<div id="conflictBanner">
+  <div class="cb-title">⚠ 检测到冲突 — 有另一台设备正在推送比分</div>
+  <div class="cb-body">当前设备的操作可能被覆盖。你可以选择「接管」成为唯一裁判端继续编辑，或「忽略」让对方继续推送。</div>
+  <div class="cb-actions">
+    <button class="btnTakeover" id="btnTakeover">✊ 接管并继续编辑</button>
+    <button class="btnDismiss" id="btnDismissConflict">忽略（15 秒后不再提醒本次）</button>
+  </div>
+  <div class="cb-ids" id="conflictIdTag"></div>
+</div>
+
+<script>
+"use strict";
+
+/* ================= 配置（默认云端地址；本地地址在 ⚙ 设置里填） ================= */
+const DEFAULT_SETTINGS = {
+  cloudBase: "http://YOUR_SERVER_IP:8080",  // ECS 公网地址
+  localBase: "",                                           // 本地服务器，如 http://192.168.1.100:8080
+  secret: "CHANGE_ME_SECRET"                       // ← 与 fc_index.py / local_server.ps1 / sync_score.ps1 一致
+};
+const SETTINGS_KEY = "referee-settings-v1";
+
+let SETTINGS = { ...DEFAULT_SETTINGS };
+try {
+  const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+  Object.assign(SETTINGS, s);
+} catch (e) {}
+
+/* ================= 状态（手机端是唯一真值） ================= */
+const STORAGE_KEY = "referee-state-v1";
+
+function newCourt() {
+  return { status: "idle", teamA: "", teamB: "", scoreA: 0, scoreB: 0, elapsedMs: 0, lastTick: 0 };
+}
+let state = { courts: [newCourt(), newCourt()] };
+let currentTab = 0;
+
+/* 会话 UUID —— 同一 tab 不变，跨 tab/跨设备不同，用来做冲突检测 */
+let SESSION_ID = sessionStorage.getItem("referee-session-id");
+if (!SESSION_ID) {
+  SESSION_ID = "r" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  sessionStorage.setItem("referee-session-id", SESSION_ID);
+}
+
+/* 冲突警告条控制（非阻塞） */
+let conflictBannerVisible = false;
+let takeoverPending = false;
+let conflictDismissUntil = 0;   // 忽略到什么时间戳，期间不再 show
+
+function showConflict(info) {
+  if (takeoverPending) return;  // 正在接管，别打扰
+  if (Date.now() < conflictDismissUntil) return;
+  if (conflictBannerVisible) return;   // 已显示就不再刷新
+  conflictBannerVisible = true;
+  document.getElementById("conflictIdTag").textContent =
+    "你的会话: " + SESSION_ID + (info && info.owner ? "\n对方会话: " + info.owner : "");
+  document.body.classList.add("banner-open");
+  // 动态测量 banner 高度，把 topbar 往下推
+  requestAnimationFrame(() => {
+    const h = document.getElementById("conflictBanner").offsetHeight;
+    document.getElementById("topbar").style.paddingTop = h + "px";
+  });
+}
+function hideConflict() {
+  conflictBannerVisible = false;
+  document.body.classList.remove("banner-open");
+  document.getElementById("topbar").style.paddingTop = "";
+}
+
+document.getElementById("btnTakeover").addEventListener("click", () => {
+  takeoverPending = true;
+  hideConflict();
+  // 立即推一次带 takeover:true 的状态，之后每次 push 也都带上，直到服务端不再返回 conflict
+  push(true);   // takeover 优先推一次；下面 setInterval 的心跳会继续带 takeover
+});
+document.getElementById("btnDismissConflict").addEventListener("click", () => {
+  hideConflict();
+  conflictDismissUntil = Date.now() + 15000;  // 15 秒内不再弹
+});
+
+function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s && Array.isArray(s.courts) && s.courts.length === 2) {
+      state = s;
+      const now = Date.now();
+      state.courts.forEach(c => { c.lastTick = now; });
+    }
+  } catch (e) {}
+}
+
+/* ================= 云端+本地双通道同步 ================= */
+function settle() {
+  // 推送前把 running 场地的计时结算到 elapsedMs 快照
+  const now = Date.now();
+  state.courts.forEach(c => {
+    if (c.status === "running") { c.elapsedMs += now - c.lastTick; c.lastTick = now; }
+  });
+}
+
+function postState(base, timeoutMs, takeover) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  const payload = {
+    courts: state.courts,
+    pushEpoch: Date.now(),
+    sessionId: SESSION_ID
+  };
+  if (takeover) payload.takeover = true;
+  const body = JSON.stringify(payload);
+  return fetch(base + "/update?key=" + encodeURIComponent(SETTINGS.secret), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body,
+    signal: ctl.signal
+  }).then(async resp => {
+    clearTimeout(timer);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    try {
+      const data = await resp.json();
+      if (data && data.conflict) {
+        showConflict(data);
+      } else if (takeoverPending) {
+        // 没有 conflict 说明接管成功，清掉 takeover 标记
+        takeoverPending = false;
+        hideConflict();
+      }
+    } catch (e) {}
+  });
+}
+
+/* 结束场次时记录成绩 */
+async function recordMatch(base, match) {
+  try {
+    await fetch(base + "/record?key=" + encodeURIComponent(SETTINGS.secret), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(match),
+    });
+  } catch (e) { /* 记录失败不阻塞主流程 */ }
+}
+
+async function pushRecord(match) {
+  // 本地优先，失败转云端（同步策略和 push 一致）
+  if (SETTINGS.localBase) {
+    await recordMatch(SETTINGS.localBase, match);
+  }
+  await recordMatch(SETTINGS.cloudBase, match);
+}
+
+async function push(forceTakeover) {
+  settle();
+  save();
+  const takeover = !!(forceTakeover || takeoverPending);
+  // 1) 本地优先：同 WiFi 时延迟最低、不依赖云
+  if (SETTINGS.localBase) {
+    try {
+      await postState(SETTINGS.localBase, 1500, takeover);
+      setSync(true, "本地");
+      return;
+    } catch (e) { /* 本地不通，转云端 */ }
+  }
+  // 2) 云端兜底：推的是全量，任何失败都会在下次推送自动恢复
+  try {
+    await postState(SETTINGS.cloudBase, 5000, takeover);
+    setSync(true, "云端");
+  } catch (e) {
+    setSync(false);
+  }
+}
+
+function setSync(ok, channel) {
+  const dot = document.getElementById("syncDot");
+  const txt = document.getElementById("syncText");
+  dot.className = ok ? "ok" : "bad";
+  txt.textContent = ok ? ("已同步 · " + channel) : "同步失败，将自动重试";
+}
+
+// 心跳：每 10 秒全量重推（服务端冷启动/丢状态后自动恢复）
+setInterval(push, 10000);
+
+/* ================= 设置面板 ================= */
+const mask = document.getElementById("settingsMask");
+document.getElementById("btnSettings").addEventListener("click", () => {
+  document.getElementById("setLocal").value = SETTINGS.localBase;
+  document.getElementById("setCloud").value = SETTINGS.cloudBase;
+  document.getElementById("setSecret").value = SETTINGS.secret;
+  mask.classList.add("show");
+});
+mask.addEventListener("click", e => { if (e.target === mask) mask.classList.remove("show"); });
+document.getElementById("btnSaveSettings").addEventListener("click", () => {
+  SETTINGS.localBase = document.getElementById("setLocal").value.trim().replace(/\/+$/, "");
+  SETTINGS.cloudBase = document.getElementById("setCloud").value.trim().replace(/\/+$/, "");
+  SETTINGS.secret = document.getElementById("setSecret").value.trim();
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+  mask.classList.remove("show");
+  push();
+});
+
+/* ================= 渲染 ================= */
+const STATUS_TEXT = { idle: "未开始", ready: "待启动", running: "进行中", paused: "已暂停" };
+const courtEl = document.getElementById("court");
+
+function fmtTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+function render() {
+  renderOverview();
+  const c = state.courts[currentTab];
+  const i = currentTab;
+  const badgeClass = c.status === "running" ? "badge running" : c.status === "paused" ? "badge paused" : "badge";
+
+  if (c.status === "idle") {
+    courtEl.innerHTML = `
+      <div class="head"><span class="badge">未开始</span></div>
+      <div class="setup">
+        <label>A 队伍名称</label><input id="inA" maxlength="20" placeholder="输入 A 队伍名称">
+        <label>B 队伍名称</label><input id="inB" maxlength="20" placeholder="输入 B 队伍名称">
+      </div>
+      <div class="controls"><button class="primary" data-act="create">创建场次</button></div>`;
+  } else {
+    const active = c.status === "running" || c.status === "paused";
+    courtEl.innerHTML = `
+      <div class="head"><span class="${badgeClass}">${STATUS_TEXT[c.status]}</span></div>
+      <div id="timer">${fmtTime(c.elapsedMs)}</div>
+      <div class="team a">
+        <button class="score-btn minus" data-act="decA" ${active ? "" : "disabled"}>−</button>
+        <span class="name" data-act="editA">${esc(c.teamA)}<i class="edit-ico">✎</i></span>
+        <span class="score" id="scoreA">${c.scoreA}</span>
+        <button class="score-btn plus" data-act="incA" ${active ? "" : "disabled"}>＋</button>
+      </div>
+      <div class="team b">
+        <button class="score-btn minus" data-act="decB" ${active ? "" : "disabled"}>−</button>
+        <span class="name" data-act="editB">${esc(c.teamB)}<i class="edit-ico">✎</i></span>
+        <span class="score" id="scoreB">${c.scoreB}</span>
+        <button class="score-btn plus" data-act="incB" ${active ? "" : "disabled"}>＋</button>
+      </div>
+      <div class="controls">
+        ${c.status === "ready" ? '<button class="primary" data-act="start">▶ 启动</button><button class="danger" data-act="cancel">取消</button>' : ""}
+        ${c.status === "running" ? '<button class="warn" data-act="pause">⏸ 暂停</button><button class="danger" data-act="finish">结束场次</button>' : ""}
+        ${c.status === "paused" ? '<button class="primary" data-act="resume">▶ 继续</button><button class="danger" data-act="finish">结束场次</button>' : ""}
+      </div>`;
+  }
+}
+
+function renderOverview() {
+  state.courts.forEach((c, i) => {
+    const el = document.getElementById("ov" + i);
+    el.innerHTML = c.status === "idle"
+      ? `场地${i + 1} 未开始`
+      : `场地${i + 1} <b>${c.scoreA}:${c.scoreB}</b> ${esc(c.teamA)}v${esc(c.teamB)}`;
+  });
+  document.getElementById("tab0").className = currentTab === 0 ? "active" : "";
+  document.getElementById("tab1").className = currentTab === 1 ? "active" : "";
+}
+
+/* ================= 页面内确认/提示弹窗 ================= */
+/* Android WebView 默认不弹原生 confirm/alert，必须自绘 */
+let dialogResolve = null;
+
+function showDialog(msg, withCancel) {
+  return new Promise(resolve => {
+    dialogResolve = resolve;
+    document.getElementById("dialogMsg").textContent = msg;
+    document.getElementById("dialogCancel").style.display = withCancel ? "" : "none";
+    document.getElementById("dialogMask").classList.add("show");
+  });
+}
+
+function closeDialog(val) {
+  document.getElementById("dialogMask").classList.remove("show");
+  const r = dialogResolve;
+  dialogResolve = null;
+  if (r) r(val);
+}
+
+function uiAlert(msg) { return showDialog(msg, false); }
+function uiConfirm(msg) { return showDialog(msg, true); }
+
+document.getElementById("dialogOk").addEventListener("click", () => closeDialog(true));
+document.getElementById("dialogCancel").addEventListener("click", () => closeDialog(false));
+
+/* 修改队伍名称弹窗（自绘 input，WebView 无原生 prompt） */
+let editResolve = null;
+
+function uiPrompt(title, initial) {
+  return new Promise(resolve => {
+    editResolve = resolve;
+    document.getElementById("editTitle").textContent = title;
+    const inp = document.getElementById("editInput");
+    inp.value = initial;
+    document.getElementById("editMask").classList.add("show");
+    setTimeout(() => { inp.focus(); inp.select(); }, 60);
+  });
+}
+
+function closeEdit(val) {
+  document.getElementById("editMask").classList.remove("show");
+  const r = editResolve;
+  editResolve = null;
+  if (r) r(val);
+}
+
+document.getElementById("btnEditOk").addEventListener("click", () => closeEdit(document.getElementById("editInput").value));
+document.getElementById("btnEditCancel").addEventListener("click", () => closeEdit(null));
+document.getElementById("editInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") closeEdit(e.target.value);
+});
+
+/* ================= 重启阿里云服务端程序（仅云端，本地服务器无此接口） ================= */
+document.getElementById("btnRestartCloud").addEventListener("click", async () => {
+  const btn = document.getElementById("btnRestartCloud");
+  if (!await uiConfirm("重启阿里云服务端程序？\n重启约 1-2 秒，期间同步中断，之后自动恢复。\n当前比分与计时已存在服务端，不会丢失。")) return;
+  btn.disabled = true;
+  btn.textContent = "重启中…";
+  let ok = false;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    const resp = await fetch(SETTINGS.cloudBase.replace(/\/+$/, "") + "/restart?key=" + encodeURIComponent(SETTINGS.secret),
+      { method: "POST", signal: ctl.signal });
+    clearTimeout(timer);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    ok = true;
+  } catch (e) { /* 失败走下面的提示 */ }
+  btn.disabled = false;
+  btn.textContent = "重启阿里云服务端程序";
+  mask.classList.remove("show");
+  if (ok) {
+    await uiAlert("重启指令已发送，云端约 1-2 秒后恢复同步。");
+    push();          // 立即重推一次，尽快恢复服务端比分
+  } else {
+    await uiAlert("重启失败：无法连接云端服务器。\n请检查网络，以及在设置里确认『云端地址』正确。");
+  }
+});
+
+/* ================= 操作 ================= */
+courtEl.addEventListener("click", async e => {
+  const t = e.target.closest("[data-act]");
+  if (!t) return;
+  const act = t.dataset.act;
+  const i = currentTab;
+  const c = state.courts[i];
+  switch (act) {
+    case "create": {
+      const a = document.getElementById("inA").value.trim();
+      const b = document.getElementById("inB").value.trim();
+      if (!a || !b) { await uiAlert("请输入 A、B 两支队伍名称"); return; }
+      state.courts[i] = { ...newCourt(), status: "ready", teamA: a, teamB: b };
+      break;
+    }
+    case "editA":
+    case "editB": {
+      const key = act === "editA" ? "teamA" : "teamB";
+      const label = act === "editA" ? "A" : "B";
+      const v = await uiPrompt(`修改 ${label} 队伍名称`, c[key]);
+      if (v === null) return;
+      const name = String(v).trim();
+      if (!name) { await uiAlert("队伍名称不能为空"); return; }
+      if (name === c[key]) return;
+      c[key] = name;
+      break;
+    }
+    case "start":
+    case "resume":
+      c.status = "running"; c.lastTick = Date.now();
+      break;
+    case "pause":
+      requestPause(i, c);
+      return;
+    case "incA": c.scoreA++; break;
+    case "decA": if (c.scoreA > 0) c.scoreA--; break;
+    case "incB": c.scoreB++; break;
+    case "decB": if (c.scoreB > 0) c.scoreB--; break;
+    case "finish": {
+      const ok = await uiConfirm(`结束场地 ${i + 1} 本场比赛？\n${c.teamA} ${c.scoreA} : ${c.scoreB} ${c.teamB}\n（成绩将自动记录）`);
+      if (!ok) return;
+      // 结算到点确定这一刻，再记录并重置
+      if (c.status === "running") { const now = Date.now(); c.elapsedMs += now - c.lastTick; c.lastTick = now; }
+      const matchRecord = {
+        court: i + 1,
+        teamA: c.teamA, scoreA: c.scoreA,
+        teamB: c.teamB, scoreB: c.scoreB,
+        durationMs: c.elapsedMs,
+        endedAt: new Date().toISOString(),
+        winner: c.scoreA > c.scoreB ? "A" : c.scoreA < c.scoreB ? "B" : "D"
+      };
+      pushRecord(matchRecord);
+      state.courts[i] = newCourt();
+      break;
+    }
+    case "cancel":
+      if (!await uiConfirm("取消该场次？当前比分将清空。")) return;
+      state.courts[i] = newCourt();
+      break;
+  }
+  render();
+  push();   // 任何变化立即全量推送
+});
+
+document.getElementById("tab0").addEventListener("click", () => { currentTab = 0; render(); });
+document.getElementById("tab1").addEventListener("click", () => { currentTab = 1; render(); });
+
+/* ================= 暂停 · 核对接收端时间 ================= */
+let pauseCtx = null;   // { courtIdx, localMs, recvMs }
+
+function requestPause(i, c) {
+  const localMs = c.elapsedMs + (Date.now() - c.lastTick);
+  pauseCtx = { courtIdx: i, localMs, recvMs: null };
+  document.getElementById("pauseLocal").textContent = fmtTime(localMs);
+  document.getElementById("pauseRecv").textContent = "获取中…";
+  document.getElementById("pauseHint").textContent =
+    "暂停后时间会定格为所选值。若两边不一致，建议以接收端为准，避免观众看到时间跳变。";
+  document.getElementById("btnPauseRecv").disabled = true;
+  document.getElementById("pauseMask").classList.add("show");
+  fetchReceiverElapsed(i).then(ms => {
+    if (!pauseCtx || pauseCtx.courtIdx !== i) return;
+    if (ms == null) {
+      document.getElementById("pauseRecv").textContent = "获取失败";
+      document.getElementById("pauseHint").textContent =
+        "无法连接服务器核对接收端时间。可直接以手机时间暂停，或取消后检查网络。";
+    } else {
+      pauseCtx.recvMs = ms;
+      document.getElementById("pauseRecv").textContent = fmtTime(ms);
+      document.getElementById("btnPauseRecv").disabled = false;
+    }
+  });
+}
+
+/* 推算接收端当前显示的时间：云端快照累计值 + 快照至今经过的服务器时长 */
+async function fetchReceiverElapsed(i) {
+  const bases = [];
+  if (SETTINGS.localBase) bases.push(SETTINGS.localBase);
+  if (SETTINGS.cloudBase) bases.push(SETTINGS.cloudBase);
+  const toMs = v => v > 1e11 ? v : v * 1000;   // ts/now 秒与毫秒自适应
+  for (const base of bases) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 3000);
+      const resp = await fetch(base + "/state?key=" + encodeURIComponent(SETTINGS.secret),
+        { cache: "no-store", signal: ctl.signal });
+      clearTimeout(timer);
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      const cc = json && json.data && json.data.courts && json.data.courts[i];
+      if (!cc) return null;
+      const baseMs = cc.elapsedMs || 0;
+      if (cc.status !== "running") return baseMs;   // 已暂停/未在走：定格值就是显示值
+      if (!json.ts) return baseMs;
+      // 旧服务端无 now 字段时，用手机时钟兜底估算
+      const nowMs = json.now ? toMs(json.now) : Date.now();
+      return baseMs + Math.max(0, nowMs - toMs(json.ts));
+    } catch (e) { /* 换下一个通道 */ }
+  }
+  return null;
+}
+
+function closePauseDialog() {
+  pauseCtx = null;
+  document.getElementById("pauseMask").classList.remove("show");
+}
+
+function applyPause(useRecv) {
+  if (!pauseCtx) return;
+  const c = state.courts[pauseCtx.courtIdx];
+  if (c && c.status === "running") {
+    c.elapsedMs = (useRecv && pauseCtx.recvMs != null) ? Math.round(pauseCtx.recvMs) : pauseCtx.localMs;
+    c.status = "paused";
+    c.lastTick = Date.now();
+    save();
+    render();
+    push();
+  }
+  closePauseDialog();
+}
+
+document.getElementById("btnPauseRecv").addEventListener("click", () => applyPause(true));
+document.getElementById("btnPauseLocal").addEventListener("click", () => applyPause(false));
+document.getElementById("btnPauseCancel").addEventListener("click", closePauseDialog);
+
+/* ================= 本地计时（不上云） ================= */
+setInterval(() => {
+  const now = Date.now();
+  let dirty = false;
+  state.courts.forEach((c, idx) => {
+    if (c.status === "running") {
+      c.elapsedMs += now - c.lastTick;
+      c.lastTick = now;
+      dirty = true;
+      if (idx === currentTab) {
+        const t = document.getElementById("timer");
+        if (t) t.textContent = fmtTime(c.elapsedMs);
+      }
+    }
+  });
+  if (dirty) save();
+}, 1000);
+
+/* ================= 启动 ================= */
+load();
+render();
+push();
+</script>
+</body>
+</html>

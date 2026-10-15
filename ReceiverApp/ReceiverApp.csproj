@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>比分接收端</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>Feipan.Receiver</RootNamespace>
+  </PropertyGroup>
+
+  <!-- 内嵌一份 receiver.html 作为兜底；同时发布时把 receiver.html 拷贝到 exe 同目录，方便直接替换更新 -->
+  <ItemGroup>
+    <EmbeddedResource Include="receiver.html" LogicalName="Feipan.Receiver.receiver.html" />
+    <Content Include="receiver.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

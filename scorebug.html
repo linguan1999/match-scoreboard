@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>vMix 比分条</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    background: transparent;          /* 关键：vMix 浏览器输入靠这个取透明通道 */
+  }
+  * { box-sizing: border-box; }
+
+  /* 右上角比分条：A 队在上，B 队在下 */
+  #bug {
+    position: absolute; top: 36px; right: 36px; width: 470px;
+    display: none;                    /* 未创建场次时整体隐藏 */
+    border-radius: 10px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(10, 13, 18, .88);
+    box-shadow: 0 8px 22px rgba(0,0,0,.55);
+    font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+  }
+  #bug.show { display: block; }
+
+  .row { display: grid; grid-template-columns: 8px 1fr 136px; height: 66px; }
+  .row.b { border-top: 2px solid rgba(255,255,255,.10); }
+
+  .bar.a { background: linear-gradient(180deg, #3f7dff, #2455c8); }
+  .bar.b { background: linear-gradient(180deg, #ff5a5a, #c62f2f); }
+
+  .name {
+    display: flex; align-items: center; padding: 0 14px;
+    font-size: 30px; font-weight: 600; letter-spacing: 1px; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .score {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 42px; font-weight: 800; color: #fff;
+    font-variant-numeric: tabular-nums;
+    border-left: 1px solid rgba(255,255,255,.12);
+  }
+  .row.a .score { background: rgba(63,125,255,.30); }
+  .row.b .score { background: rgba(255,90,90,.26); }
+
+  @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  .score.changed { animation: pop .35s ease-out; }
+
+  /* 数据定格警示点：仅当链路异常（拉取断供/数据停滞）时出现，?warn=0 可关闭 */
+  #warnDot {
+    display: none; position: absolute; right: 8px; bottom: 8px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff3b30; box-shadow: 0 0 6px rgba(255,59,48,.9);
+    animation: blink 1s steps(2, start) infinite;
+  }
+  @keyframes blink { 50% { opacity: .25; } }
+</style>
+</head>
+<body>
+
+<div id="bug">
+  <div class="row a">
+    <span class="bar a"></span>
+    <span class="name" id="nameA">--</span>
+    <span class="score" id="scoreA">0</span>
+  </div>
+  <div class="row b">
+    <span class="bar b"></span>
+    <span class="name" id="nameB">--</span>
+    <span class="score" id="scoreB">0</span>
+  </div>
+</div>
+<span id="warnDot"></span>
+
+<script>
+"use strict";
+
+/* ================= 配置（可用 URL 参数覆盖） =================
+   ?court=1|2                        场地：1 = 场地1，2 = 场地2（默认 1）
+   ?url=...                          主数据源（默认云端 ECS）
+   ?url2=...                         备用数据源（默认本机 local_server；传空禁用）
+   ?warn=0                           关闭右下角"数据定格"红色警示点
+   推荐：vMix 本机跑 local_server.ps1 时用
+        ?url=http://127.0.0.1:8080&url2=http://YOUR_SERVER_IP:8080
+   容灾逻辑：当前源连续失败 2 次自动切备用源并粘住；
+             粘在备用源期间每 30 秒回探主源，恢复即切回；
+             断线时保留上一帧比分不闪烁。
+================================================================ */
+const P = new URLSearchParams(location.search);
+const CFG = {
+  url:  (P.get("url") || "http://YOUR_SERVER_IP:8080").replace(/\/+$/, ""),
+  url2: (P.has("url2") ? P.get("url2").trim().replace(/\/+$/, "") : "http://127.0.0.1:8080"),
+  key: P.get("key") || "CHANGE_ME_SECRET",
+  court: Math.min(2, Math.max(1, parseInt(P.get("court") || "1", 10) || 1)),
+  warn: P.get("warn") !== "0"
+};
+const SOURCES = [...new Set([CFG.url, CFG.url2].filter(Boolean))];
+
+const bug   = document.getElementById("bug");
+const nameA = document.getElementById("nameA");
+const nameB = document.getElementById("nameB");
+const scoreA = document.getElementById("scoreA");
+const scoreB = document.getElementById("scoreB");
+const warnDot = document.getElementById("warnDot");
+
+const toMs = v => (v > 1e11 ? v : v * 1000);   // ts/now 秒与毫秒自适应
+
+/* ---- 多源粘性切换状态 ---- */
+let curIdx = 0;          // 当前数据源下标（粘住可用的源）
+let failCount = 0;       // 当前源连续失败次数（≥2 切换）
+let lastProbe = 0;       // 上次回探主源的时刻
+let lastGoodAt = 0;      // 最后一次成功拉取的时刻
+let dataAgeMs = 0;       // 服务端数据年龄（now - ts）
+let everShown = false;   // 是否显示过比分条（显示过才有"定格"可言）
+
+function setName(el, v) {
+  v = (v || "").trim();
+  el.textContent = v || "--";
+  // 队名过长时自动缩小字号，避免被截断
+  el.style.fontSize = v.length > 9 ? "22px" : (v.length > 7 ? "26px" : "30px");
+}
+
+function setScore(el, v) {
+  const s = String(v == null ? 0 : v);
+  if (el.textContent === s) return;
+  el.textContent = s;
+  el.classList.remove("changed");
+  void el.offsetWidth;      // 触发重排以便重放动画
+  el.classList.add("changed");
+}
+
+async function fetchFrom(base) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 2000);   // 防止挂起请求堆积
+  try {
+    const resp = await fetch(base + "/state?key=" + encodeURIComponent(CFG.key), { cache: "no-store", signal: ctl.signal });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return await resp.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function render(json) {
+  const courts = json && json.data && json.data.courts;
+  const c = courts && courts[CFG.court - 1];
+
+  if (c && c.status && c.status !== "idle") {
+    setName(nameA, c.teamA);
+    setName(nameB, c.teamB);
+    setScore(scoreA, c.scoreA);
+    setScore(scoreB, c.scoreB);
+    bug.classList.add("show");
+    everShown = true;
+  } else {
+    bug.classList.remove("show");   // 未开始 / 已结束 → 画面干净不显示
+  }
+}
+
+function setWarn(on, title) {
+  if (!CFG.warn) return;
+  warnDot.style.display = on ? "block" : "none";
+  if (title) warnDot.title = title;
+}
+
+async function tick() {
+  const now = Date.now();
+
+  // 粘在备用源时每 30 秒回探一次主源，恢复则切回
+  const probePrimary = curIdx !== 0 && now - lastProbe > 30000;
+  if (probePrimary) lastProbe = now;
+
+  let json = null;
+  const tryOrder = probePrimary ? [0, curIdx] : [curIdx];
+  for (const idx of tryOrder) {
+    try {
+      json = await fetchFrom(SOURCES[idx]);
+      curIdx = idx;              // 成功 → 粘住这个源（回探成功即切回主源）
+      failCount = 0;
+      lastGoodAt = now;
+      break;
+    } catch (e) { /* 换下一个源 */ }
+  }
+
+  if (json) {
+    const tsMs = json.ts ? toMs(json.ts) : 0;
+    if (tsMs) {
+      const refMs = json.now ? toMs(json.now) : Date.now();
+      dataAgeMs = Math.max(0, refMs - tsMs);
+    }
+    render(json);
+  } else {
+    failCount++;
+    if (failCount >= 2 && SOURCES.length > 1) {
+      curIdx = (curIdx + 1) % SOURCES.length;   // 连续失败 → 切下一个源
+      failCount = 0;
+    }
+  }
+
+  // 新鲜度告警：显示过比分条后，拉取断供 >6s 或服务端数据停滞 >30s → 红点闪烁
+  const disconnected = everShown && now - lastGoodAt > 6000;
+  const stale = everShown && dataAgeMs > 30000;
+  setWarn(
+    disconnected || stale,
+    disconnected ? "比分数据拉取中断，画面已定格" : "比分数据超过 30 秒未更新（推送端可能掉线）"
+  );
+
+  setTimeout(tick, 800);
+}
+
+tick();
+</script>
+</body>
+</html>

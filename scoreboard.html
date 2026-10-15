@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>比赛计分器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #14171c; color: #e8eaed; min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 20px; background: #1c2027; border-bottom: 1px solid #2a2f38;
+  }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: 2px; }
+  #csvStatus {
+    font-size: 13px; padding: 4px 12px; border-radius: 12px;
+    background: #3a2a2a; color: #ff9a9a;
+  }
+  #csvStatus.ok { background: #1f3a2a; color: #7de3a8; }
+  #btnBindCsv {
+    padding: 8px 18px; font-size: 14px; border: none; border-radius: 6px;
+    background: #2f6fed; color: #fff; cursor: pointer;
+  }
+  #btnBindCsv:hover { background: #4a82f5; }
+  main {
+    flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  .court {
+    background: #1c2027; border: 1px solid #2a2f38; border-radius: 12px;
+    display: flex; flex-direction: column; padding: 16px; gap: 14px;
+  }
+  .court-head { display: flex; align-items: center; justify-content: space-between; }
+  .court-title { font-size: 18px; font-weight: 600; color: #9aa3b2; letter-spacing: 2px; }
+  .badge { font-size: 13px; padding: 4px 14px; border-radius: 12px; background: #2a2f38; color: #9aa3b2; }
+  .badge.running { background: #1f3a2a; color: #7de3a8; }
+  .badge.paused  { background: #3a3423; color: #f0cf7d; }
+
+  .timer {
+    text-align: center; font-size: 56px; font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: 3px; color: #f0f2f5;
+  }
+
+  .teams { display: flex; flex-direction: column; gap: 12px; }
+  .team {
+    display: grid; grid-template-columns: 64px 1fr 110px 64px;
+    align-items: center; gap: 12px;
+    padding: 10px 14px; border-radius: 10px;
+  }
+  .team.a { background: rgba(47,111,237,.12); border: 1px solid rgba(47,111,237,.35); }
+  .team.b { background: rgba(237,80,80,.10); border: 1px solid rgba(237,80,80,.35); }
+  .team .name {
+    font-size: 24px; font-weight: 600; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .team.a .name { color: #7aa7ff; }
+  .team.b .name { color: #ff8f8f; }
+  .team .score {
+    font-size: 56px; font-weight: 800; text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .score-btn {
+    height: 64px; font-size: 30px; font-weight: 700; border: none;
+    border-radius: 10px; cursor: pointer; color: #fff;
+  }
+  .score-btn.plus  { background: #2e7d4f; }
+  .score-btn.plus:hover  { background: #38a065; }
+  .score-btn.minus { background: #4a3038; }
+  .score-btn.minus:hover { background: #6b4250; }
+  .score-btn:disabled { opacity: .3; cursor: not-allowed; }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-top: auto; }
+  .controls button {
+    flex: 1; min-width: 100px; padding: 14px 8px; font-size: 17px; font-weight: 600;
+    border: none; border-radius: 8px; cursor: pointer; color: #fff; background: #3a4150;
+  }
+  .controls button:hover { filter: brightness(1.2); }
+  .controls button.primary { background: #2f6fed; }
+  .controls button.warn { background: #8a5a2a; }
+  .controls button.danger { background: #7d2e2e; }
+  .controls button:disabled { opacity: .3; cursor: not-allowed; }
+
+  /* 新建场次表单 */
+  .setup { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
+  .setup label { font-size: 15px; color: #9aa3b2; }
+  .setup input {
+    width: 100%; padding: 14px; font-size: 20px; border-radius: 8px;
+    border: 1px solid #3a4150; background: #14171c; color: #fff; outline: none;
+  }
+  .setup input:focus { border-color: #2f6fed; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>比赛计分器</h1>
+  <span id="csvStatus">CSV 未绑定</span>
+  <button id="btnBindCsv">绑定 CSV 文件</button>
+</header>
+
+<main id="courts"></main>
+
+<script>
+"use strict";
+
+/* ================= 状态 ================= */
+// 每个场地: status: idle(未创建) | ready(已创建待启动) | running | paused
+const STORAGE_KEY = "scoreboard-state-v1";
+
+let state = {
+  courts: [newCourt(), newCourt()]
+};
+
+function newCourt() {
+  return { status: "idle", teamA: "", teamB: "", scoreA: 0, scoreB: 0, elapsedMs: 0, lastTick: 0 };
+}
+
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s && Array.isArray(s.courts) && s.courts.length === 2) {
+      state = s;
+      // 恢复时从当前时刻重新起算，关闭期间不计时
+      const now = Date.now();
+      state.courts.forEach(c => { c.lastTick = now; });
+    }
+  } catch (e) { /* 忽略损坏数据 */ }
+}
+
+/* ================= CSV 输出（vMix 数据源） ================= */
+let csvFileHandle = null;
+
+const STATUS_TEXT = { idle: "未开始", ready: "待启动", running: "进行中", paused: "已暂停" };
+
+function fmtTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+
+function csvCell(v) {
+  v = String(v);
+  return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+
+function buildCSV() {
+  const rows = [["场地", "A队伍", "A队得分", "B队伍", "B队得分", "比赛时间", "状态"]];
+  state.courts.forEach((c, i) => {
+    rows.push([
+      "场地" + (i + 1),
+      c.teamA, c.status === "idle" ? "" : c.scoreA,
+      c.teamB, c.status === "idle" ? "" : c.scoreB,
+      fmtTime(c.elapsedMs),
+      STATUS_TEXT[c.status] || c.status
+    ]);
+  });
+  // UTF-8 BOM，保证 vMix 正确识别中文编码
+  return "\ufeff" + rows.map(r => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
+
+let writing = false, writePending = false;
+async function writeCSV() {
+  if (!csvFileHandle) return;
+  if (writing) { writePending = true; return; }
+  writing = true;
+  try {
+    const w = await csvFileHandle.createWritable();
+    await w.write(buildCSV());
+    await w.close();
+    setCsvStatus(true);
+  } catch (e) {
+    setCsvStatus(false);
+  }
+  writing = false;
+  if (writePending) { writePending = false; writeCSV(); }
+}
+
+function setCsvStatus(ok) {
+  const el = document.getElementById("csvStatus");
+  if (!csvFileHandle) { el.textContent = "CSV 未绑定"; el.className = ""; return; }
+  if (ok) { el.textContent = "CSV 已绑定：" + csvFileHandle.name; el.className = "ok"; }
+  else { el.textContent = "CSV 写入失败，请重新绑定"; el.className = ""; }
+}
+
+async function bindCSV() {
+  try {
+    csvFileHandle = await showSaveFilePicker({
+      suggestedName: "score.csv",
+      types: [{ description: "CSV 文件", accept: { "text/csv": [".csv"] } }]
+    });
+    await saveHandle(csvFileHandle);
+    await writeCSV();
+  } catch (e) { /* 用户取消 */ }
+}
+
+/* ---- 句柄存入 IndexedDB，刷新后自动恢复 ---- */
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open("scoreboard-db", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("kv");
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function saveHandle(handle) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("kv", "readwrite");
+    tx.objectStore("kv").put(handle, "csvHandle");
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+async function loadHandle() {
+  try {
+    const db = await idbOpen();
+    const handle = await new Promise((res, rej) => {
+      const req = db.transaction("kv", "readonly").objectStore("kv").get("csvHandle");
+      req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error);
+    });
+    if (!handle) return;
+    // 已有授权则直接恢复；否则等用户点击绑定时重新授权
+    if ((await handle.queryPermission({ mode: "readwrite" })) === "granted") {
+      csvFileHandle = handle;
+      writeCSV();
+    }
+  } catch (e) { /* 恢复失败则忽略 */ }
+  setCsvStatus(!!csvFileHandle);
+}
+
+/* ================= 变更入口 ================= */
+function changed() { save(); writeCSV(); render(); }
+
+/* ================= 渲染 ================= */
+const courtsEl = document.getElementById("courts");
+
+function render() {
+  courtsEl.innerHTML = "";
+  state.courts.forEach((c, i) => courtsEl.appendChild(renderCourt(c, i)));
+}
+
+function renderCourt(c, i) {
+  const div = document.createElement("div");
+  div.className = "court";
+
+  const badgeClass = c.status === "running" ? "badge running" : c.status === "paused" ? "badge paused" : "badge";
+
+  if (c.status === "idle") {
+    div.innerHTML = `
+      <div class="court-head"><span class="court-title">场地 ${i + 1}</span><span class="badge">未开始</span></div>
+      <div class="setup">
+        <label>A 队伍名称</label><input id="inA${i}" maxlength="20" placeholder="输入 A 队伍名称">
+        <label>B 队伍名称</label><input id="inB${i}" maxlength="20" placeholder="输入 B 队伍名称">
+      </div>
+      <div class="controls"><button class="primary" data-act="create">创建场次</button></div>`;
+  } else {
+    const active = c.status === "running" || c.status === "paused";
+    div.innerHTML = `
+      <div class="court-head">
+        <span class="court-title">场地 ${i + 1}</span>
+        <span class="${badgeClass}">${STATUS_TEXT[c.status]}</span>
+      </div>
+      <div class="timer" id="timer${i}">${fmtTime(c.elapsedMs)}</div>
+      <div class="teams">
+        <div class="team a">
+          <button class="score-btn minus" data-act="decA" ${active ? "" : "disabled"}>−</button>
+          <span class="name">${esc(c.teamA)}</span>
+          <span class="score" id="scoreA${i}">${c.scoreA}</span>
+          <button class="score-btn plus" data-act="incA" ${active ? "" : "disabled"}>＋</button>
+        </div>
+        <div class="team b">
+          <button class="score-btn minus" data-act="decB" ${active ? "" : "disabled"}>−</button>
+          <span class="name">${esc(c.teamB)}</span>
+          <span class="score" id="scoreB${i}">${c.scoreB}</span>
+          <button class="score-btn plus" data-act="incB" ${active ? "" : "disabled"}>＋</button>
+        </div>
+      </div>
+      <div class="controls">
+        ${c.status === "ready" ? '<button class="primary" data-act="start">▶ 启动</button>' : ""}
+        ${c.status === "running" ? '<button class="warn" data-act="pause">⏸ 暂停</button>' : ""}
+        ${c.status === "paused" ? '<button class="primary" data-act="resume">▶ 继续</button>' : ""}
+        ${active ? '<button class="danger" data-act="finish">结束场次</button>' : ""}
+        ${c.status === "ready" ? '<button class="danger" data-act="cancel">取消场次</button>' : ""}
+      </div>`;
+  }
+
+  div.addEventListener("click", e => {
+    const act = e.target.dataset && e.target.dataset.act;
+    if (act) handleAction(i, act);
+  });
+  return div;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+/* ================= 操作 ================= */
+function handleAction(i, act) {
+  const c = state.courts[i];
+  switch (act) {
+    case "create": {
+      const a = document.getElementById("inA" + i).value.trim();
+      const b = document.getElementById("inB" + i).value.trim();
+      if (!a || !b) { alert("请输入 A、B 两支队伍名称"); return; }
+      state.courts[i] = { ...newCourt(), status: "ready", teamA: a, teamB: b };
+      break;
+    }
+    case "start":
+    case "resume":
+      c.status = "running"; c.lastTick = Date.now();
+      break;
+    case "pause":
+      c.elapsedMs += Date.now() - c.lastTick;
+      c.status = "paused";
+      break;
+    case "incA": c.scoreA++; break;
+    case "decA": if (c.scoreA > 0) c.scoreA--; break;
+    case "incB": c.scoreB++; break;
+    case "decB": if (c.scoreB > 0) c.scoreB--; break;
+    case "finish":
+      if (c.status === "running") { c.elapsedMs += Date.now() - c.lastTick; }
+      if (!confirm(`结束场地 ${i + 1} 的本场比赛？\n${c.teamA} ${c.scoreA} : ${c.scoreB} ${c.teamB}`)) return;
+      state.courts[i] = newCourt();
+      break;
+    case "cancel":
+      if (!confirm("取消该场次？当前比分将清空。")) return;
+      state.courts[i] = newCourt();
+      break;
+  }
+  changed();
+}
+
+/* ================= 计时循环 ================= */
+setInterval(() => {
+  const now = Date.now();
+  let dirty = false;
+  state.courts.forEach((c, i) => {
+    if (c.status === "running") {
+      c.elapsedMs += now - c.lastTick;
+      c.lastTick = now;
+      dirty = true;
+      const t = document.getElementById("timer" + i);
+      if (t) t.textContent = fmtTime(c.elapsedMs);
+    }
+  });
+  if (dirty) { save(); writeCSV(); }
+}, 1000);
+
+/* ================= 启动 ================= */
+document.getElementById("btnBindCsv").addEventListener("click", bindCSV);
+load();
+loadHandle();
+render();
+writeCSV();
+</script>
+</body>
+</html>

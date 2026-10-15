@@ -1,0 +1,26 @@
+# ===== 构建产物 =====
+**/bin/
+**/obj/
+**/publish/
+**/publish_new/
+__pycache__/
+*.pyc
+
+# ===== Android =====
+# SDK 需自行通过 android-build/build.ps1 下载，不入库
+android-build/sdk/
+android-build/cmdline-tools.zip
+*.apk
+# 签名密钥属敏感文件，严禁提交
+*.keystore
+
+# ===== 运行时数据 =====
+state.json
+results.csv
+*.log
+
+# ===== IDE / 系统 =====
+.trae/
+.vscode/
+.idea/
+.DS_Store
